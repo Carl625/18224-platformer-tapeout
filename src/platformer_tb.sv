@@ -41,6 +41,11 @@ module platformer_tb();
     $finish;
   end
 
+
+
+  // Initialization checking
+  // Main procedure 
+
   // display testbench
   /*
   initial
