@@ -4,7 +4,7 @@ module platformer_tb();
 
   logic [3:0][15:0][7:0] display_output;
   logic [7:0] bus;
-  logic clk, rst_l;
+  logic clk, reset;
   logic enable_l, RS, RW;
   logic jump;
 
@@ -20,39 +20,231 @@ module platformer_tb();
     forever #5 clk = ~clk;
   end
 
-  // primitive output testbench
+  // primitive output testbench & jump generator
   initial
   begin
     $monitor($time,,
               "Bus: %0b, RS: %b, RW: %b, enable: %b",
               bus, RS, RW, enable_l);
 
-    rst_l = 1'b1;
-    #1 rst_l = 1'b0;
-    #1 rst_l = 1'b1;
+    reset = 1'b0;
+    #1 reset = 1'b1;
+    #1 reset = 1'b0;
 
     @(posedge clk);
 
     for (int i = 0; i < 10000000; i++)
     begin
       @(posedge clk);
+      jump = i % 2;
     end
 
     $finish;
   end
 
+  // invaraints
+  assert property (@(posedge clk) $fell(enable_l) |-> ##2 $rose(enable_l));
 
+  task check_command(input logic[7:0] command);
+    assert (bus === command);
+    assert (RS === 1'd0);
+    assert (RW === 1'd0);
+  endtask
+
+  task check_write(input logic[7:0] data);
+    assert (bus === data);
+    assert (RS === 1'b1);
+    assert (RW === 1'b0);
+  endtask
 
   // Initialization checking
+  initial
+  begin
+    // check enable is zeroed at beginning
+    wait(~reset);
+    @(posedge clk);
+    assert ( enable_l = 1'b0 );
+    // check for wake up call #1
+    wait(game.initialization_counter === game.WKUP1);
+    @(posedge clk);
+    @(posedge clk);
+    check_command(8'h30);
+    // check for wake up call #2
+    wait(game.initialization_counter === game.WKUP2);
+    @(posedge clk);
+    @(posedge clk);
+    check_command(8'h30);
+    // check for wake up call #3
+    wait(game.initialization_counter === game.WKUP3);
+    @(posedge clk);
+    @(posedge clk);
+    check_command(8'h30);
+    // check for function set command
+    wait(game.initialization_counter === game.DYNAMIC);
+    wait(game.op_state === game.OP)
+    @(posedge clk);
+    @(posedge clk);
+    check_command(8'h38);
+    // check for cursor set command
+    wait(game.op_state === game.OP)
+    @(posedge clk);
+    @(posedge clk);
+    check_command(8'h10);
+    // check for display on command
+    wait(game.op_state === game.OP)
+    @(posedge clk);
+    @(posedge clk);
+    check_command(8'h0C);
+    // check for entry mode set command
+    wait(game.op_state === game.OP)
+    @(posedge clk);
+    @(posedge clk);
+    check_command(8'h06);
+    // check for clear screen command
+    wait(game.op_state === game.OP)
+    @(posedge clk);
+    @(posedge clk);
+    check_command(8'h01);
+    // check for return home command
+    wait(game.op_state === game.OP)
+    @(posedge clk);
+    @(posedge clk);
+    check_command(8'h02);
+    
+    // check for addressing to 0x50
+    wait(game.op_state === game.OP)
+    @(posedge clk);
+    @(posedge clk);
+    check_command(8'h80 | 8'h50);
+
+    // check all the writes for the initial platform
+    for (int i = 0; i < 16; i++)
+    begin  
+      wait(game.op_state === game.OP)
+      @(posedge clk);
+      @(posedge clk);
+      check_write(8'hFF);
+    end
+
+    // check the adressing to 0x13 for the player
+    wait(game.op_state === game.OP)
+    @(posedge clk);
+    @(posedge clk);
+    check_command(8'h80 | 8'h13);
+
+    // check for a write of 0xFF to player pos
+    wait(game.op_state === game.OP)
+    @(posedge clk);
+    @(posedge clk);
+    check_write(8'hFF);
+    
+    // end of game
+    wait(game.game_end === 1'd1);
+    $finish
+  end
+
   // Main procedure 
+  initial
+  begin
+    
+    while (game.game_end != 1'd1)
+    begin
+      // wait for WAIT stage to be over
+      wait(game.game_state === game.CLEAN_UP);
+      @(posedge clk);
+      @(posedge clk);
+
+
+      // check for addressing of top platform position (0x40)
+      wait(game.game_state === game.CLEAN_UP && game.interval_counter === 16'd1);
+      @(posedge clk);
+      @(posedge clk);
+      check_command(8'h80 | top_pltfm_addr);
+
+      // check for erasure of top platform pos
+      wait(game.game_state === game.CLEAN_UP && game.interval_counter === 16'd2);
+      @(posedge clk);
+      @(posedge clk);
+      check_write(8'h20);
+      
+      // check for addressing of middle platform (0x10)
+      wait(game.game_state === game.CLEAN_UP && game.interval_counter === 16'd3);
+      @(posedge clk);
+      @(posedge clk);
+      check_command(8'h80 | middle_pltfm_addr);
+      
+      // check for erasure of middle platform pos
+      wait(game.game_state === game.CLEAN_UP && game.interval_counter === 16'd4);
+      @(posedge clk);
+      @(posedge clk);
+      check_write(8'h20);
+      
+      // check for addressing of bottom platform (0x50)
+      wait(game.game_state === game.CLEAN_UP && game.interval_counter === 16'd5);
+      @(posedge clk);
+      @(posedge clk);
+      check_command(8'h80 | bot_pltfm_addr);
+      
+      // check for erausre of bottom platform pos
+      wait(game.game_state === game.CLEAN_UP && game.interval_counter === 16'd6);
+      @(posedge clk);
+      @(posedge clk);
+      check_write(8'h20);
+      
+      // transition to shift state
+      // check for shift command
+      wait(game.game_state === game.SHIFT && game.interval_counter === 16'd8);
+      @(posedge clk);
+      @(posedge clk);
+      check_command(8'h18);
+
+      // calculation of new platform height
+      wait(game.game_state === game.PLATFORM_EXT && game.interval_counter === 16'd9);
+      @(posedge clk);
+      @(posedge clk);
+      
+      // check for addressing of new platform address
+      wait(game.game_state === game.PLATFORM_EXT && game.interval_counter === 16'd10);
+      @(posedge clk);
+      @(posedge clk);
+      check_command(8'h80 | new_pltfm_addr);
+      
+      // check for write of FF to new platform address
+      wait(game.game_state === game.PLATFORM_EXT && game.interval_counter === 16'd11);
+      @(posedge clk);
+      @(posedge clk);
+      check_write(8'hFF);
+      
+      // transition to player height recalculation
+      wait(game.game_state === game.PLATFORM_EXT && game.interval_counter === 16'd12);
+      
+      // check for addressing to new player height
+      wait(game.game_state === game.PLAYER_HEIGHT && game.interval_counter === 16'd13);
+      @(posedge clk);
+      @(posedge clk);
+      check_command(8'h80 | new_player_addr);
+      
+      // check for the write of 0xFF to new player addr
+      wait(game.game_state === game.PLAYER_HEIGHT && game.interval_counter === 16'd13);
+      @(posedge clk);
+      @(posedge clk);
+      check_write(8'hFF);
+      
+      // repeat
+
+    end
+    
+    // end of game
+    $finish
+  end
 
   // display testbench
   /*
   initial
   begin
-    rst_l = 1'b1;
-    #1 rst_l = 1'b0;
-    #1 rst_l = 1'b1;
+    reset = 1'b0;
+    #1 reset = 1'b1;
+    #1 reset = 1'b0;
 
     @(posedge clk);
 

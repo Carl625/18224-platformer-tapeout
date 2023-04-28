@@ -1,7 +1,7 @@
 `default_nettype none
 
 module platformer(
-  input logic clk, rst_l,
+  input logic clk, reset,
   input logic jump,
   output logic RS, RW,
   output logic [7:0] bus,
@@ -39,6 +39,7 @@ module platformer(
   // initialization phase trackers
   logic [15:0] initialization_counter;
   logic [3:0] dynamic_init_phases;
+  logic [3:0] pltfm_write_counter;
 
   // game state info
   logic [11:0] pltfm_height_history[1:0];
@@ -55,9 +56,9 @@ module platformer(
   plyr_height_to_addr plyr_conv(.plyr_height, .player_addr);
   pltfm_height_to_addr pltfm_conv(.pltfm_height, .pltfm_addr);
 
-  always_ff @(posedge clk, negedge rst_l)
+  always_ff @(posedge clk, posedge reset)
   begin
-    if (~rst_l)
+    if (reset)
     begin
       pltfm_height_history[0] <= 2'b0;
       pltfm_height_history[1] <= 2'b0;
@@ -99,7 +100,7 @@ module platformer(
   assign plyr_pltfm_height = pltfm_height_history[11];
 
   // jump logging
-  assign jmp_logged = rst_l ? (jump | jmp_logged):1'b0;
+  assign jmp_logged = reset ? 1'b0:(jump | jmp_logged);
 
   // bus logic
   always_comb
@@ -180,9 +181,9 @@ module platformer(
   end
 
   // initialization logic
-  always_ff @(posedge clk, negedge rst_l)
+  always_ff @(posedge clk, posedge reset)
   begin
-    if (~rst_l)
+    if (reset)
     begin
       enable_l <= 1'b0;
       bus_mode <= COMMAND;
@@ -192,6 +193,7 @@ module platformer(
 
       initialization_counter <= 16'd0;
       dynamic_init_phases <= 4'd0;
+      pltfm_write_counter <= 4'd0;
 
       game_start <= 1'b0;
 
@@ -267,36 +269,46 @@ module platformer(
                     case (dynamic_init_phases)
                       0:
                       begin
+                        // function set
                         next_command <= 8'h38;
                       end
                       1:
                       begin
+                        // cursor set
                         next_command <= 8'h10;
                       end
                       2:
                       begin
+                        // display on
                         next_command <= 8'h0C;
                       end
                       3:
                       begin
+                        // entry set
                         next_command <= 8'h06;
                       end
                       4:
                       begin
+                        // clear screen
                         next_command <= 8'h01;
                       end
                       5:
                       begin
+                        //return home
                         next_command <= 8'h02;
                       end
                       6:
                       begin
-                        next_command <= (8'h80 | pltfm_addr);
+                        next_command <= (8'h80 | pltfm_addr - 8'h0F);
                       end
                       7:
                       begin
                         bus_mode <= DRAM_WR;
                         next_data <= 8'hFF;
+                        pltfm_write_counter <= pltfm_write_counter + 4'd1;
+                        // run this for 16 cycles to completely draw the
+                        // initial platform
+                        dynamic_init_phases <=  (pltfm_write_counter == 8'hFF) ? (dynamic_init_phases + 4'd1):dynamic_init_phases; 
                       end
                       8:
                       begin
@@ -304,11 +316,13 @@ module platformer(
                       end
                       9:
                       begin
+                        // only need to draw this once in initialization!
                         bus_mode <= DRAM_WR;
                         next_data <= 8'hFF;
                       end
                       default:
                       begin
+                        // GAME PHASE, pause initialization phases forever
                         dynamic_init_phases <= dynamic_init_phases;
 
                         case (game_state)
@@ -328,7 +342,7 @@ module platformer(
                               begin
                                 enable_l <= 1'b1;
                                 bus_mode <= COMMAND;
-                                next_command <= (8'h80 | ({2'b0, SH} + 8'h10));
+                                next_command <= (8'h80 | ({2'b0, SH} + 8'h40));
                               end
                               2:
                               begin
@@ -340,7 +354,7 @@ module platformer(
                               begin
                                 enable_l <= 1'b1;
                                 bus_mode <= COMMAND;
-                                next_command <= (8'h80 | ({2'b0, SH} + 8'h40));
+                                next_command <= (8'h80 | ({2'b0, SH} + 8'h10));
                               end
                               4:
                               begin
